@@ -78,6 +78,11 @@ python3 dashboard.py
 
 Then open `http://<jetson-ip>:8000/` from any device on the same network.
 
+It also has **drive controls**: a hold-to-move directional pad (release to stop), a
+speed slider, and keyboard support (W A S D or arrow keys). A server-side watchdog
+stops the motors automatically if no command arrives for 0.6 s, so the robot halts
+if the connection drops. Lift the wheels off the ground before driving.
+
 The dashboard holds the camera and LIDAR continuously, so close the camera/LIDAR
 cells in the notebooks while it runs (only one process can use each device).
 
