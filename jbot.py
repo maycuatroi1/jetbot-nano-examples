@@ -156,10 +156,33 @@ def lidar_sectors(port="/dev/ttyUSB0", max_scans=3):
     return {k: (min(v) / 1000.0 if v else None) for k, v in sectors.items()}
 
 
+def focus_meter(samples=0, width=1280, height=720):
+    import cv2
+
+    cap = cv2.VideoCapture(gst_pipeline(width, height), cv2.CAP_GSTREAMER)
+    count = 0
+    best = 0.0
+    try:
+        while True:
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            sharp = cv2.Laplacian(gray, cv2.CV_64F).var()
+            best = max(best, sharp)
+            bar = "#" * int(min(sharp, 400) / 8)
+            print("sharpness %7.1f  best %7.1f  %s" % (sharp, best, bar))
+            count += 1
+            if samples and count >= samples:
+                return best
+    finally:
+        cap.release()
+
+
 def _cli():
     args = sys.argv[1:]
     if not args:
-        print("usage: jbot.py [battery|snap|lidar|fwd|back|left|right|stop|test] [speed] [secs]")
+        print("usage: jbot.py [battery|snap|lidar|focus|fwd|back|left|right|stop|test] [speed] [secs]")
         return
     cmd = args[0]
     if cmd == "battery":
@@ -171,6 +194,9 @@ def _cli():
     if cmd == "lidar":
         for k, v in lidar_sectors().items():
             print("%-6s %s" % (k, ("%.2f m" % v) if v else "n/a"))
+        return
+    if cmd == "focus":
+        focus_meter(int(args[1]) if len(args) > 1 else 0)
         return
     speed = float(args[1]) if len(args) > 1 else 0.4
     secs = float(args[2]) if len(args) > 2 else 1.0
