@@ -41,6 +41,17 @@ def drive(direction, speed):
         drive_state["last"] = time.time()
 
 
+def drive_lr(left, right):
+    if robot is None:
+        return
+    left = max(-1.0, min(1.0, left))
+    right = max(-1.0, min(1.0, right))
+    with robot_lock:
+        robot.set_motors(left, right)
+        drive_state["moving"] = abs(left) > 0.001 or abs(right) > 0.001
+        drive_state["last"] = time.time()
+
+
 def watchdog_worker():
     while True:
         time.sleep(0.1)
@@ -213,7 +224,7 @@ PAGE = """<!doctype html>
       <div class="speed">
         <label for="spd">Speed <span class="num" id="spdval">0.30</span></label>
         <input id="spd" type="range" min="0.1" max="1" step="0.05" value="0.3">
-        <p class="hint">Hold a direction to drive, release to stop. Keyboard: W A S D or arrow keys. Auto-stops if the connection drops.</p>
+        <p class="hint">Hold one or two directions together (e.g. forward + left to curve), release to stop. Keyboard: W A S D or arrow keys. Auto-stops if the connection drops.</p>
         <p class="nodrive" id="nodrive" hidden>Motor driver not detected; controls disabled.</p>
       </div>
     </div>
@@ -311,44 +322,60 @@ const spd = document.getElementById("spd");
 const spdval = document.getElementById("spdval");
 spd.addEventListener("input", () => { spdval.textContent = parseFloat(spd.value).toFixed(2); });
 
-let holdTimer = null, activeBtn = null;
-async function send(dir){ try{ await fetch("/move?dir="+dir+"&speed="+spd.value, {cache:"no-store"}); }catch(e){} }
+const keymap = {w:"forward", s:"backward", a:"left", d:"right",
+  arrowup:"forward", arrowdown:"backward", arrowleft:"left", arrowright:"right"};
+const held = new Set();
+const pressedKeys = new Set();
+let driveTimer = null;
+
+function compute(){
+  const throttle = (held.has("forward")?1:0) + (held.has("backward")?-1:0);
+  const steer = (held.has("right")?1:0) + (held.has("left")?-1:0);
+  let l = throttle + steer, r = throttle - steer;
+  const m = Math.max(Math.abs(l), Math.abs(r), 1);
+  const s = parseFloat(spd.value);
+  return [l / m * s, r / m * s];
+}
+async function pushDrive(){
+  const [l, r] = compute();
+  try{ await fetch("/drive?left="+l.toFixed(3)+"&right="+r.toFixed(3), {cache:"no-store"}); }catch(e){}
+}
 async function sendStop(){ try{ await fetch("/stop", {cache:"no-store"}); }catch(e){} }
 
-function startHold(dir, btn){
-  if (activeBtn) return;
-  activeBtn = btn; if (btn) btn.classList.add("active");
-  send(dir);
-  holdTimer = setInterval(() => send(dir), 150);
+function markActive(){
+  document.querySelectorAll(".pad-btn[data-dir]").forEach(b => b.classList.toggle("active", held.has(b.dataset.dir)));
 }
-function endHold(){
-  if (holdTimer){ clearInterval(holdTimer); holdTimer = null; }
-  if (activeBtn){ activeBtn.classList.remove("active"); activeBtn = null; sendStop(); }
+function refresh(){
+  markActive();
+  if (held.size === 0){
+    if (driveTimer){ clearInterval(driveTimer); driveTimer = null; }
+    sendStop();
+    return;
+  }
+  pushDrive();
+  if (!driveTimer) driveTimer = setInterval(pushDrive, 150);
 }
+function press(dir){ if (dir){ held.add(dir); refresh(); } }
+function release(dir){ if (dir){ held.delete(dir); refresh(); } }
 
 document.querySelectorAll(".pad-btn[data-dir]").forEach(btn => {
   const dir = btn.dataset.dir;
-  btn.addEventListener("pointerdown", e => { e.preventDefault(); startHold(dir, btn); });
-  btn.addEventListener("pointerup", endHold);
-  btn.addEventListener("pointerleave", endHold);
-  btn.addEventListener("pointercancel", endHold);
+  btn.addEventListener("pointerdown", e => { e.preventDefault(); if (btn.setPointerCapture) btn.setPointerCapture(e.pointerId); press(dir); });
+  btn.addEventListener("pointerup", () => release(dir));
+  btn.addEventListener("pointercancel", () => release(dir));
 });
-document.getElementById("stopbtn").addEventListener("pointerdown", e => { e.preventDefault(); endHold(); sendStop(); });
+document.getElementById("stopbtn").addEventListener("pointerdown", e => { e.preventDefault(); held.clear(); pressedKeys.clear(); refresh(); });
 
-const keymap = {w:"forward", s:"backward", a:"left", d:"right",
-  arrowup:"forward", arrowdown:"backward", arrowleft:"left", arrowright:"right"};
-const pressedKeys = new Set();
 window.addEventListener("keydown", e => {
   const k = e.key.toLowerCase(); const dir = keymap[k];
   if (!dir || pressedKeys.has(k)) return;
-  pressedKeys.add(k); e.preventDefault();
-  startHold(dir, document.querySelector('.pad-btn[data-dir="'+dir+'"]'));
+  pressedKeys.add(k); e.preventDefault(); press(dir);
 });
 window.addEventListener("keyup", e => {
-  const k = e.key.toLowerCase(); if (!keymap[k]) return;
-  pressedKeys.delete(k); endHold();
+  const k = e.key.toLowerCase(); const dir = keymap[k]; if (!dir) return;
+  pressedKeys.delete(k); release(dir);
 });
-window.addEventListener("blur", endHold);
+window.addEventListener("blur", () => { held.clear(); pressedKeys.clear(); refresh(); });
 
 let driveChecked = false;
 function applyDriveAvailability(has){
@@ -409,6 +436,15 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:
                 speed = 0.3
             drive(direction, speed)
+            self._json({"ok": True})
+        elif self.path.startswith("/drive"):
+            params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            try:
+                left = float(params.get("left", ["0"])[0])
+                right = float(params.get("right", ["0"])[0])
+            except ValueError:
+                left = right = 0.0
+            drive_lr(left, right)
             self._json({"ok": True})
         elif self.path.startswith("/stop"):
             drive("stop", 0)
