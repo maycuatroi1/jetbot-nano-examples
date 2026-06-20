@@ -1,0 +1,5 @@
+smbus
+rplidar-roboticia
+matplotlib
+ipywidgets
+notebook
