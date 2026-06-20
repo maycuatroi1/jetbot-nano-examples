@@ -6,6 +6,9 @@ import smbus
 PCA9685_ADDR = 0x60
 INA219_ADDR = 0x41
 
+LIDAR_ANGLE_OFFSET = 0.0
+LIDAR_MIN_RANGE = 0.15
+
 MODE1 = 0x00
 PRESCALE = 0xFE
 LED0_ON_L = 0x06
@@ -129,6 +132,17 @@ def snapshot(path="/tmp/snap.jpg", width=1280, height=720):
     return path
 
 
+def bucket(angle):
+    a = (angle - LIDAR_ANGLE_OFFSET) % 360
+    if a >= 315 or a < 45:
+        return "front"
+    if a < 135:
+        return "right"
+    if a < 225:
+        return "back"
+    return "left"
+
+
 def lidar_sectors(port="/dev/ttyUSB0", max_scans=3):
     from rplidar import RPLidar
 
@@ -145,15 +159,29 @@ def lidar_sectors(port="/dev/ttyUSB0", max_scans=3):
         lidar.disconnect()
     sectors = {"front": [], "right": [], "back": [], "left": []}
     for angle, dist in points:
-        if angle >= 315 or angle < 45:
-            sectors["front"].append(dist)
-        elif angle < 135:
-            sectors["right"].append(dist)
-        elif angle < 225:
-            sectors["back"].append(dist)
-        else:
-            sectors["left"].append(dist)
+        sectors[bucket(angle)].append(dist)
     return {k: (min(v) / 1000.0 if v else None) for k, v in sectors.items()}
+
+
+def lidar_calib(port="/dev/ttyUSB0"):
+    from rplidar import RPLidar
+
+    lidar = RPLidar(port, baudrate=115200)
+    try:
+        for scan in lidar.iter_scans(max_buf_meas=2000):
+            valid = [(a, d) for (_, a, d) in scan if d > 0]
+            if not valid:
+                print("no returns (object may be inside the ~15cm dead zone)")
+                continue
+            a, d = min(valid, key=lambda x: x[1])
+            print(
+                "nearest angle=%6.1f deg  dist=%6.0f mm  ->  current sector: %s"
+                % (a, d, bucket(a))
+            )
+    finally:
+        lidar.stop()
+        lidar.stop_motor()
+        lidar.disconnect()
 
 
 def focus_meter(samples=0, width=1280, height=720):
@@ -182,7 +210,7 @@ def focus_meter(samples=0, width=1280, height=720):
 def _cli():
     args = sys.argv[1:]
     if not args:
-        print("usage: jbot.py [battery|snap|lidar|focus|fwd|back|left|right|stop|test] [speed] [secs]")
+        print("usage: jbot.py [battery|snap|lidar|lidar-calib|focus|fwd|back|left|right|stop|test] [speed] [secs]")
         return
     cmd = args[0]
     if cmd == "battery":
@@ -197,6 +225,9 @@ def _cli():
         return
     if cmd == "focus":
         focus_meter(int(args[1]) if len(args) > 1 else 0)
+        return
+    if cmd == "lidar-calib":
+        lidar_calib()
         return
     speed = float(args[1]) if len(args) > 1 else 0.4
     secs = float(args[2]) if len(args) > 2 else 1.0

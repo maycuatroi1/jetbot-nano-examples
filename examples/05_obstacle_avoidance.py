@@ -18,7 +18,7 @@ def main():
             left = sectors.get("left")
             right = sectors.get("right")
             print(sectors)
-            if front is None or front > STOP_DISTANCE:
+            if front is not None and front > STOP_DISTANCE:
                 robot.forward(SPEED)
             else:
                 robot.stop()

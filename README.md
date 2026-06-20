@@ -66,6 +66,39 @@ cd notebooks
 jupyter notebook --ip=0.0.0.0 --no-browser
 ```
 
+## Live dashboard
+
+A single-page web dashboard shows the camera feed and the LIDAR radar at the same
+time, plus battery and the four sector distances. It is a self-contained server
+using only the Python standard library (no Flask), with a minimalist light theme.
+
+```bash
+python3 dashboard.py
+```
+
+Then open `http://<jetson-ip>:8000/` from any device on the same network.
+
+The dashboard holds the camera and LIDAR continuously, so close the camera/LIDAR
+cells in the notebooks while it runs (only one process can use each device).
+
+## LIDAR notes: dead zone and calibration
+
+- **Dead zone**: the RPLIDAR A1 has a minimum range of about 15 cm. Objects closer
+  than that return no measurement at all, so a wall pressed against the robot is
+  invisible to the LIDAR. The obstacle-avoidance logic therefore treats "no return
+  in front" as blocked, not clear.
+- **Angle calibration**: the radar assumes LIDAR angle 0 points to the front of the
+  robot. If it is mounted rotated, place an object straight ahead (about 40 cm) and
+  run:
+
+  ```bash
+  python3 jbot.py lidar-calib
+  ```
+
+  Read the reported `nearest angle`, then set `LIDAR_ANGLE_OFFSET` in `jbot.py` to
+  that value. After that, `bucket()`, `lidar_sectors()` and the dashboard radar all
+  align "front" with the real front.
+
 ## Motor pin map (PCA9685, Adafruit MotorHAT style)
 
 | Motor | PWM | IN1 | IN2 |
